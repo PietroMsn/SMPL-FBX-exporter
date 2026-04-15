@@ -1,0 +1,45 @@
+# ============================================================
+# requirements.txt
+# Python dependencies for the SMPL-to-FBX animation pipeline.
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Note: fbx (Autodesk FBX Python SDK) and chumpy must be
+# installed manually — see comments below.
+# ============================================================
+
+# --- Numerical / scientific -------------------------------------
+numpy>=1.24,<2.0
+scipy>=1.10
+
+# --- 3-D math ---------------------------------------------------
+transforms3d>=0.4.2
+
+# --- Machine learning / sparse ops ------------------------------
+scikit-learn>=1.3        # used in original codebase (sklearn.preprocessing)
+
+# --- Visualisation (optional, used in original model.py) --------
+matplotlib>=3.7
+
+# ============================================================
+# Packages that require manual installation
+# ============================================================
+
+# fbx
+#   The Autodesk FBX Python SDK is not available on PyPI.
+#   Download the matching version for your Python / OS from:
+#   https://www.autodesk.com/developer-network/platform-technologies/fbx-sdk-2020-2
+#   Then install the provided wheel or follow Autodesk's instructions.
+
+# chumpy
+#   The original PyPI package (chumpy==0.70) is Python 2 only.
+#   Use the community-maintained Python 3 fork:
+#     pip install git+https://github.com/mattloper/chumpy.git
+#   or pin to the last known working version if available on PyPI:
+#     chumpy==0.70
+
+# serialization  (SMPL model loader)
+#   This is a local module that ships with the SMPL model download.
+#   Place serialization.py (from the SMPL package) in the project root
+#   alongside these source files.
