@@ -2,6 +2,8 @@ Usage
 
     python main.py <pose_mat> <output_name> <mesh_mat> <scale>
 
+    e.g. python main.py ./animations/bow_ext1.mat bow_ext1 ./meshes/MESH1Tpose.mat 5
+
 Requirements:
 Python 2.7
 
