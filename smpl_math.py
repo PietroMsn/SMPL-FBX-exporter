@@ -1,28 +1,16 @@
 """
 smpl_math.py
-Pure mathematical utilities for the SMPL body model.
-
-No FBX, no file I/O, no project-level imports - this module sits at the
-bottom of the dependency stack and can be imported by any other module
-without risk of circular references.
+Pure math for the SMPL body model: no FBX and no file I/O.
 
 Functions
 ---------
-rodrigues_to_euler      Convert a Rodrigues rotation vector to Euler angles.
-calc_local_position     Compute parent-relative joint positions from vertices.
-pose_to_joint_rotations Extract per-joint Euler angles from a raw SMPL pose vector.
+rodrigues_to_euler      Convert Rodrigues rotation vectors to Euler angles.
+calc_local_position     Parent-relative joint positions from mesh vertices.
+pose_to_joint_rotations Per-joint Euler angles for one or many SMPL poses.
 """
 
-import math
-
 import numpy as np
-from numpy import linalg
-import transforms3d
-
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+from scipy.spatial.transform import Rotation
 
 NUM_JOINTS = 24
 
@@ -33,104 +21,58 @@ JOINT_PARENTS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Rotation helpers
-# ---------------------------------------------------------------------------
-
-def rodrigues_to_euler(rotation_vector):
+def rodrigues_to_euler(rotation_vectors):
     """
-    Convert a 3-D Rodrigues rotation vector (axis x angle) to Euler angles.
+    Convert Rodrigues vectors (axis * angle, radians) to Euler angles.
 
-    Uses the Rodrigues formula to build the 3x3 rotation matrix, then
-    extracts ZYX Euler angles via ``transforms3d``.
+    Angles are extrinsic X, then Y, then Z, in degrees, matching the default
+    FBX rotation order (eEulerXYZ).
 
     Parameters
     ----------
-    rotation_vector : (3,) array  -  axis scaled by rotation angle (radians).
+    rotation_vectors : (..., 3) array.
 
     Returns
     -------
-    euler : (3,) array of Euler angles in **degrees**.
-            Returns the zero vector unchanged when the input has zero norm.
+    (..., 3) array of Euler angles in degrees.
     """
-    angle = linalg.norm(rotation_vector)
-    if angle == 0.0:
-        return rotation_vector.copy()
-
-    axis = rotation_vector / angle
-
-    skew = np.array([
-        [ 0.0,    -axis[2],  axis[1]],
-        [ axis[2], 0.0,     -axis[0]],
-        [-axis[1], axis[0],  0.0    ],
-    ])
-
-    rotation_matrix = (
-        np.eye(3)
-        + skew * math.sin(angle)
-        + np.matmul(skew, skew * (1.0 - math.cos(angle)))
-    )
-
-    return np.array(transforms3d.euler.mat2euler(rotation_matrix)) * 180.0 / math.pi
+    rotation_vectors = np.asarray(rotation_vectors, dtype=float)
+    flat = rotation_vectors.reshape(-1, 3)
+    euler = Rotation.from_rotvec(flat).as_euler("xyz", degrees=True)
+    return euler.reshape(rotation_vectors.shape)
 
 
-# ---------------------------------------------------------------------------
-# Joint position helpers
-# ---------------------------------------------------------------------------
-
-def calc_local_position(smpl_model, vertices):
+def calc_local_position(joint_regressor, vertices):
     """
     Compute the parent-relative position of each SMPL joint.
 
-    The joint world positions are obtained by applying the SMPL joint
-    regressor to the mesh vertices.  Each joint position is then expressed
-    relative to its parent joint (joint 0 / Pelvis is kept in world space).
-
     Parameters
     ----------
-    smpl_model : SMPL model object that exposes a sparse ``J_regressor``
-                 of shape (24, N_vertices).
-    vertices   : (N, 3) float array of mesh vertex positions.
+    joint_regressor : (24, N) array mapping vertices to joint positions.
+    vertices        : (N, 3) array of mesh vertex positions.
 
     Returns
     -------
-    local_positions : list of 24 [x, y, z] float lists.
+    (24, 3) array. Row 0 (Pelvis) is in world space, the others are offsets
+    from their parent joint.
     """
-    regressor = np.asarray(smpl_model.J_regressor.todense())  # (24, N)
-
-    # World-space joint positions - shape (24, 3)
-    J = np.column_stack([
-        np.squeeze(np.matmul(regressor, vertices[:, ax]))
-        for ax in range(3)
-    ])
-
-    local_positions = [J[0].tolist()]  # Pelvis: keep in world space
-
-    for i in range(1, NUM_JOINTS):
-        local_positions.append((J[i] - J[JOINT_PARENTS[i]]).tolist())
-
-    return local_positions
+    joints = joint_regressor @ vertices
+    local = joints - joints[JOINT_PARENTS]
+    local[0] = joints[0]
+    return local
 
 
-# ---------------------------------------------------------------------------
-# Pose extraction
-# ---------------------------------------------------------------------------
-
-def pose_to_joint_rotations(smpl_model):
+def pose_to_joint_rotations(poses):
     """
-    Convert the current SMPL pose vector to per-joint Euler angles (degrees).
-
-    Reads ``smpl_model.pose`` (a flat 72-element vector = 24 joints x 3),
-    reshapes it into (24, 3) Rodrigues vectors, and converts each to Euler
-    angles with :func:`rodrigues_to_euler`.
+    Convert SMPL pose vectors to per-joint Euler angles (degrees).
 
     Parameters
     ----------
-    smpl_model : SMPL model object with a ``pose`` attribute of length 72.
+    poses : (72,) for a single pose or (F, 72) for F frames.
 
     Returns
     -------
-    joint_rotation : (24, 3) float array of Euler angles in degrees.
+    (24, 3) or (F, 24, 3) array of Euler angles in degrees.
     """
-    raw = np.array(smpl_model.pose[:]).reshape(NUM_JOINTS, 3)
-    return np.array([rodrigues_to_euler(raw[i]) for i in range(NUM_JOINTS)])
+    poses = np.asarray(poses, dtype=float)
+    return rodrigues_to_euler(poses.reshape(poses.shape[:-1] + (NUM_JOINTS, 3)))
