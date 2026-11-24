@@ -1,22 +1,27 @@
 """
 attach_anim.py
-Diagnostic script: loads a SURREAL info .mat file and prints the pose matrix.
+Diagnostic script: print the pose data stored in a SURREAL info .mat file.
 
 Usage
 -----
-    python attach_anim.py
+    python attach_anim.py <file_info.mat>
 """
+
+import sys
 
 import scipy.io as sio
 
 
-MAT_FILE = "03_01_c0001_info.mat"
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python attach_anim.py <file_info.mat>")
+        return 1
 
-
-def main() -> None:
-    mat_data = sio.loadmat(MAT_FILE)
-    print(mat_data["pose"])
+    pose = sio.loadmat(sys.argv[1])["pose"]
+    print(f"pose array: shape {pose.shape} ({pose.shape[1]} frames x {pose.shape[0]} values)")
+    print(pose)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

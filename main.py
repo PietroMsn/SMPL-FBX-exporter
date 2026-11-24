@@ -1,183 +1,136 @@
-'''
+"""
 main.py
-Entry point: loads SMPL pose data, builds the FBX scene, and exports it.
+Convert a SURREAL pose sequence into a rigged, skinned and animated FBX file.
 
-Usage
------
-    python main.py <pose_mat> <output_name> <mesh_mat> <scale>
+Run ``python main.py --help`` for usage.
+"""
 
-Arguments
----------
-pose_mat    : Path to the SURREAL .mat file containing pose data.
-output_name : Base name for the output .fbx file (no extension).
-mesh_mat    : Path to the .mat file containing mesh geometry (VERT, TRIV).
-scale       : Integer scale factor applied to vertex coordinates.
-
-
-'''
-
+import argparse
+import os
 import sys
 
-import fbx
-import FbxCommon
+import numpy as np
+import scipy.io as sio
 from fbx import (
     FbxManager, FbxIOSettings, FbxScene,
     FbxAnimStack, FbxAnimLayer,
     FbxExporter, FbxMesh, FbxVector4,
     IOSROOT, EXP_FBX_EMBEDDED,
 )
-import scipy.io as sio
-import numpy as np
 
-from serialization import load_model
-from geometry import load_geometry_from_args
-from skeleton import create_skinned_mesh
 from animate import bake_animation
+from geometry import load_geometry
+from skeleton import create_skinned_mesh
+from smpl_math import calc_local_position, pose_to_joint_rotations
+from smpl_model import load_joint_regressor
+
+DEFAULT_MODEL = os.path.join("models", "basicmodel_m_lbs_10_207_0_v1.0.0.pkl")
+DEFAULT_WEIGHTS = "myWeights.npy"
+DEFAULT_FPS = 30.0  # SURREAL videos are rendered at 30 fps
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description="Export a SURREAL/SMPL pose sequence as an animated FBX.")
+    p.add_argument("pose_mat", help="SURREAL *_info.mat file with a 'pose' array (72 x F)")
+    p.add_argument("mesh_mat", help=".mat file with the mesh ('VERT' and 'TRIV')")
+    p.add_argument("-o", "--output",
+                   help="output .fbx path (default: resFbx/<pose file name>.fbx)")
+    p.add_argument("-s", "--scale", type=float, default=1.0,
+                   help="scale factor applied to the mesh vertices (default: 1)")
+    p.add_argument("--fps", type=float, default=DEFAULT_FPS,
+                   help=f"frame rate of the animation (default: {DEFAULT_FPS:g})")
+    p.add_argument("--start", type=int, default=0, help="first frame (inclusive)")
+    p.add_argument("--end", type=int, help="last frame (exclusive, default: all)")
+    p.add_argument("--model", default=DEFAULT_MODEL,
+                   help="SMPL model .pkl, or .npy/.npz with J_regressor "
+                        f"(default: {DEFAULT_MODEL})")
+    p.add_argument("--weights", default=DEFAULT_WEIGHTS,
+                   help=f"skin weights .npy of shape (24, N) (default: {DEFAULT_WEIGHTS})")
+    args = p.parse_args(argv)
 
-SMPL_MODEL_PATH = "./models/basicmodel_m_lbs_10_207_0_v1.0.0.pkl"
-OUTPUT_DIR      = "./resFbx/Buff/"
-INIT_FRAME      = 0
+    if args.output is None:
+        stem = os.path.splitext(os.path.basename(args.pose_mat))[0]
+        args.output = os.path.join("resFbx", stem + ".fbx")
+    return args
 
 
-# ---------------------------------------------------------------------------
-# Scene construction
-# ---------------------------------------------------------------------------
-
-def _build_mesh(sdk_manager, name):
-    """Create an FbxMesh populated with vertices and triangles from the mesh .mat."""
+def build_mesh(sdk_manager, vertices, faces, name="human"):
+    """Create an FbxMesh from vertex and triangle arrays."""
     mesh = FbxMesh.Create(sdk_manager, name)
 
-    vertices, faces = load_geometry_from_args()
-
-    # Control points
     mesh.InitControlPoints(len(vertices))
     for idx, v in enumerate(vertices):
-        mesh.SetControlPointAt(FbxVector4(v[0], v[1], v[2]), idx)
+        mesh.SetControlPointAt(FbxVector4(*map(float, v)), idx)
 
-    # Triangles
     for face in faces:
         mesh.BeginPolygon()
-        mesh.AddPolygon(int(face[0]))
-        mesh.AddPolygon(int(face[1]))
-        mesh.AddPolygon(int(face[2]))
+        for vert_idx in face:
+            mesh.AddPolygon(int(vert_idx))
         mesh.EndPolygon()
 
     mesh.RemoveBadPolygons()
     return mesh
 
 
-def create_scene(sdk_manager, scene, pose_mat_path):
-    """
-    Populate *scene* with the animated SMPL human model.
+def create_scene(sdk_manager, scene, args):
+    """Populate *scene* with the skinned, animated SMPL character."""
+    regressor = load_joint_regressor(args.model)
+    weights = np.load(args.weights)
+    vertices, faces = load_geometry(args.mesh_mat, args.scale)
+    poses = sio.loadmat(args.pose_mat)["pose"].T[args.start:args.end]  # (F, 72)
+    if len(poses) == 0:
+        raise ValueError("No frames selected: check --start/--end")
 
-    Parameters
-    ----------
-    sdk_manager   : FbxManager instance.
-    scene         : FbxScene instance to populate.
-    pose_mat_path : Path to the SURREAL pose .mat file.
+    local_positions = calc_local_position(regressor, vertices)
+    rotations = pose_to_joint_rotations(poses)
 
-    Returns
-    -------
-    True on success.
-    """
-    smpl_model = load_model(SMPL_MODEL_PATH)
-    pose_mat   = sio.loadmat(pose_mat_path)
-    final_frame = len(pose_mat["pose"][0])
+    mesh = build_mesh(sdk_manager, vertices, faces)
+    _, joints = create_skinned_mesh(sdk_manager, scene, mesh, local_positions, weights)
 
-    # Build mesh geometry
-    raw_mesh = _build_mesh(sdk_manager, "human")
-
-    # Attach skeleton + skinning
-    mesh_node, joints, skinned_mesh = create_skinned_mesh(
-        sdk_manager, scene, smpl_model, raw_mesh
-    )
-    mesh_node.SetNodeAttribute(skinned_mesh)
-
-    # Create animation stack + base layer
     anim_stack = FbxAnimStack.Create(scene, "Take001")
     anim_layer = FbxAnimLayer.Create(scene, "Base Layer")
     anim_stack.AddMember(anim_layer)
 
-    # Bake keyframes
-    bake_animation(
-        mesh_node, joints, anim_layer, scene,
-        rotation=True,
-        pose_mat=pose_mat,
-        init_frame=INIT_FRAME,
-        final_frame=final_frame,
-        use_translation=False,
-        smpl_model=smpl_model,
-    )
-
-    return True
+    bake_animation(joints, anim_layer, rotations, local_positions[0], args.fps)
+    return len(poses)
 
 
-# ---------------------------------------------------------------------------
-# FBX export
-# ---------------------------------------------------------------------------
+def export_scene(sdk_manager, scene, output_path):
+    """Write *scene* to *output_path* in binary FBX format."""
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
-def _init_sdk():
-    """Initialise the FBX SDK manager and I/O settings."""
-    sdk_manager = FbxManager.Create()
-    io_settings = FbxIOSettings.Create(sdk_manager, IOSROOT)
-    sdk_manager.SetIOSettings(io_settings)
-    sdk_manager.GetIOSettings().SetBoolProp(EXP_FBX_EMBEDDED, False)
-    return sdk_manager, io_settings
-
-
-def _export_scene(sdk_manager, scene, output_name):
-    """Save *scene* to ``OUTPUT_DIR/<output_name>.fbx``."""
     file_format = sdk_manager.GetIOPluginRegistry().GetNativeWriterFormat()
-    output_path = OUTPUT_DIR + output_name + ".fbx"
-
     exporter = FbxExporter.Create(sdk_manager, "")
-    exporter.Initialize(output_path, file_format, sdk_manager.GetIOSettings())
-    exporter.Export(scene)
+    try:
+        if not exporter.Initialize(output_path, file_format, sdk_manager.GetIOSettings()):
+            raise RuntimeError(exporter.GetStatus().GetErrorString())
+        if not exporter.Export(scene):
+            raise RuntimeError(exporter.GetStatus().GetErrorString())
+    finally:
+        exporter.Destroy()
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def main(argv=None):
+    args = parse_args(argv)
 
-def main():
-    if len(sys.argv) < 5:
-        print("Usage: python main.py <pose_mat> <output_name> <mesh_mat> <scale>")
-        sys.exit(1)
+    sdk_manager = FbxManager.Create()
+    try:
+        io_settings = FbxIOSettings.Create(sdk_manager, IOSROOT)
+        io_settings.SetBoolProp(EXP_FBX_EMBEDDED, False)
+        sdk_manager.SetIOSettings(io_settings)
 
-    pose_mat_path = sys.argv[1]
-    output_name   = sys.argv[2]
+        scene = FbxScene.Create(sdk_manager, "")
+        num_frames = create_scene(sdk_manager, scene, args)
+        export_scene(sdk_manager, scene, args.output)
+    finally:
+        sdk_manager.Destroy()
 
-    sdk_manager, _ = _init_sdk()
-    scene = FbxScene.Create(sdk_manager, "")
-
-    create_scene(sdk_manager, scene, pose_mat_path)
-
-    # Intermediate save (debug helper)
-    FbxCommon.SaveScene(sdk_manager, scene, "prova")
-
-    _export_scene(sdk_manager, scene, output_name)
-
-    exporter = FbxExporter.Create(sdk_manager, "")
-
-    # exports the scene in fbx format at the path:
-    save_path = "./resFbx/"
-    filename = sys.argv[2] + "_newAnimation.fbx"
-
-    lFileFormat = sdk_manager.GetIOPluginRegistry().GetNativeWriterFormat()
-
-    # Specify the path and name of the file to be imported
-    _ = exporter.Initialize(save_path + filename, lFileFormat, sdk_manager.GetIOSettings())
-
-    _ = exporter.Export(scene)
-
-    sdk_manager.Destroy()
-    sys.exit(0)
+    print(f"Exported {num_frames} frames to {args.output}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
