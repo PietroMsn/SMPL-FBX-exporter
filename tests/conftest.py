@@ -200,22 +200,47 @@ import pytest  # noqa: E402
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MESH = os.path.join(PROJECT, "meshes", "MESH1_SMPL.mat")
 POSE = os.path.join(PROJECT, "animations", "104_03_c0003_info.mat")
-WEIGHTS = os.path.join(PROJECT, "myWeights.npy")
+
+
+def synthetic_smpl_arrays(seed=0):
+    """
+    Arrays shaped like an SMPL model, with made-up content: the real model
+    is licensed and cannot be shipped with the tests.
+    """
+    import scipy.io as sio
+
+    rng = np.random.default_rng(seed)
+    mesh = sio.loadmat(MESH)
+    v_template = np.asarray(mesh["VERT"], dtype=float)
+    num_verts = len(v_template)
+
+    weights = np.zeros((num_verts, 24))  # (V, 24) as in the SMPL files
+    for v in range(num_verts):
+        joints = rng.choice(24, 3, replace=False)
+        weights[v, joints] = rng.random(3) + 0.1
+    weights /= weights.sum(axis=1, keepdims=True)
+
+    regressor = np.zeros((24, num_verts))
+    for j in range(24):
+        regressor[j, rng.choice(num_verts, 10, replace=False)] = 0.1
+
+    return {
+        "v_template": v_template,
+        "f": (np.asarray(mesh["TRIV"]) - 1).astype(np.uint32),
+        "weights": weights,
+        "J_regressor": regressor,
+    }
 
 
 @pytest.fixture
-def regressor_file(tmp_path):
-    """Synthetic joint regressor (the real SMPL model is licensed)."""
-    rng = np.random.default_rng(0)
-    reg = np.zeros((24, 6890))
-    for j in range(24):
-        reg[j, rng.choice(6890, 10, replace=False)] = 0.1
-    path = tmp_path / "regressor.npz"
-    np.savez(path, J_regressor=reg)
+def model_file(tmp_path):
+    """Synthetic SMPL model saved as .npz."""
+    path = tmp_path / "SMPL_TEST.npz"
+    np.savez(path, **synthetic_smpl_arrays())
     return str(path)
 
 
 @pytest.fixture
-def rig(regressor_file):
+def rig(model_file):
     from rig import build_rig
-    return build_rig(POSE, MESH, regressor_file, WEIGHTS, end=20)
+    return build_rig(POSE, model_file, end=20)

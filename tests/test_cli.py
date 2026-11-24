@@ -16,7 +16,7 @@ def test_format_from_extension(output, fmt):
 @pytest.mark.parametrize("fmt, ext", [("fbx", ".fbx"), ("gltf", ".glb"), ("usd", ".usdc")])
 def test_default_output_name(fmt, ext):
     args = main.parse_args(["dir/run_info.mat", "m.mat", "-f", fmt])
-    assert args.output == os.path.join("resFbx", "run_info" + ext)
+    assert args.output == os.path.join("output", "run_info" + ext)
 
 
 def test_default_format_is_fbx():
