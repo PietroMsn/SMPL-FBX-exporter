@@ -6,8 +6,9 @@ import scipy.io as sio
 
 import fbx
 import main
-from conftest import MESH, POSE, WEIGHTS
+from conftest import POSE
 from rig import JOINT_NAMES
+from smpl_model import load_smpl_model
 from smpl_math import pose_to_joint_rotations
 
 pytestmark = pytest.mark.skipif(not getattr(fbx, "IS_FAKE", False),
@@ -20,10 +21,10 @@ def _walk(node):
         yield from _walk(child)
 
 
-def test_export(tmp_path, regressor_file):
+def test_export(tmp_path, model_file):
     out = tmp_path / "out" / "anim.fbx"
-    assert main.main([POSE, MESH, "-o", str(out), "--model", regressor_file,
-                      "--weights", WEIGHTS, "--fps", "25", "--end", "10"]) == 0
+    assert main.main([POSE, "-o", str(out), "--model", model_file,
+                      "--fps", "25", "--end", "10"]) == 0
     assert out.exists()  # output directory was created
 
     _, scene = fbx.FbxExporter.last
@@ -39,7 +40,7 @@ def test_export(tmp_path, regressor_file):
     assert len(mesh.points) == 6890 and len(mesh.polygons) == 13776
     clusters = mesh.deformers[0].clusters
     assert len({c.name for c in clusters}) == len(clusters) == 25
-    assert sum(len(c.weights) for c in clusters) == np.count_nonzero(np.load(WEIGHTS))
+    assert sum(len(c.weights) for c in clusters) == np.count_nonzero(load_smpl_model(model_file).weights)
 
     # 10 frames at 25 fps, values taken from the pose file
     pelvis = root_joint.children[0]
@@ -55,7 +56,13 @@ def test_export(tmp_path, regressor_file):
     assert not knee.LclTranslation.curves
 
 
-def test_bad_frame_range(tmp_path, regressor_file):
+def test_bad_frame_range(tmp_path, model_file):
     with pytest.raises(ValueError):
-        main.main([POSE, MESH, "-o", str(tmp_path / "x.fbx"), "--model", regressor_file,
-                   "--weights", WEIGHTS, "--start", "100000"])
+        main.main([POSE, "-o", str(tmp_path / "x.fbx"), "--model", model_file,
+                   "--start", "100000"])
+
+
+def test_missing_model_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "MODELS_DIR", str(tmp_path))
+    with pytest.raises(SystemExit, match="No SMPL model found"):
+        main.main([POSE, "-o", str(tmp_path / "x.glb")])

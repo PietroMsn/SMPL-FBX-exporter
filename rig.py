@@ -23,7 +23,7 @@ from scipy.spatial.transform import Rotation
 
 from geometry import load_geometry
 from smpl_math import NUM_JOINTS, calc_local_position
-from smpl_model import load_joint_regressor
+from smpl_model import load_smpl_model
 
 ROOT = NUM_JOINTS  # index of the virtual Root joint
 
@@ -86,27 +86,42 @@ def z_up_to_y_up(rotations):
     return out
 
 
-def build_rig(pose_mat, mesh_mat, model, weights, scale=1.0, fps=30.0,
+def build_rig(pose_mat, model, mesh_mat=None, scale=1.0, fps=30.0,
               start=0, end=None, up_axis="y"):
     """
     Load all inputs from disk and return a :class:`Rig`.
 
-    *up_axis* is the axis pointing up in the pose data: ``"z"`` re-orients
-    the animation for the Y-up output (see :func:`z_up_to_y_up`).
+    Parameters
+    ----------
+    pose_mat : .mat file with a ``pose`` array of shape (72, F).
+    model    : official SMPL model file (.pkl or .npz); provides the skin
+               weights, the joint regressor and, by default, the mesh.
+    mesh_mat : optional .mat file with a custom T-pose body in SMPL topology
+               (``VERT``, optionally ``TRIV``). Default: the SMPL template.
+    up_axis  : axis pointing up in the pose data; ``"z"`` re-orients the
+               animation for the Y-up output (see :func:`z_up_to_y_up`).
     """
-    vertices, faces = load_geometry(mesh_mat, scale)
-    weights = np.load(weights)
-    if weights.shape != (NUM_JOINTS, len(vertices)):
-        raise ValueError(f"Skin weights have shape {weights.shape}, expected "
-                         f"({NUM_JOINTS}, {len(vertices)})")
+    smpl = load_smpl_model(model)
+
+    if mesh_mat is None:
+        vertices, faces = smpl.v_template, smpl.faces
+    else:
+        vertices, faces = load_geometry(mesh_mat)
+        if len(vertices) != len(smpl.v_template):
+            raise ValueError(
+                f"{mesh_mat} has {len(vertices)} vertices; a mesh in SMPL topology "
+                f"has {len(smpl.v_template)}")
+        if faces is None:
+            faces = smpl.faces
+    vertices = vertices * scale
 
     poses = sio.loadmat(pose_mat)["pose"].T[start:end]  # (F, 72)
     if len(poses) == 0:
         raise ValueError("No frames selected: check --start/--end")
 
-    regressor = load_joint_regressor(model)
+    weights = smpl.weights
     rest_offsets = np.zeros((NUM_JOINTS + 1, 3))
-    rest_offsets[:NUM_JOINTS] = calc_local_position(regressor, vertices)
+    rest_offsets[:NUM_JOINTS] = calc_local_position(smpl.J_regressor, vertices)
 
     rotations = np.asarray(poses, dtype=float).reshape(len(poses), NUM_JOINTS, 3)
     if up_axis == "z":
