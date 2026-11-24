@@ -1,11 +1,15 @@
-# Python 3 dependencies for the SMPL -> FBX pipeline.
+# Python 3 dependencies for the SMPL -> FBX / glTF / USD pipeline.
 #   pip install -r requirements.txt
 #
-# The Autodesk FBX Python SDK is NOT on PyPI: install it separately
-# (see README). chumpy is no longer needed.
+# glTF export needs nothing beyond numpy/scipy.
+# FBX export needs the Autodesk FBX Python SDK, which is NOT on PyPI:
+# install it separately (see README).
 
 numpy>=1.24
 scipy>=1.10
+
+# USD export
+usd-core>=23.11
 
 # tests
 pytest>=7

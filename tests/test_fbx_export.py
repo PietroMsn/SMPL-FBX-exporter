@@ -1,6 +1,4 @@
-"""End-to-end run of main.py on the sample data, using the fake fbx module."""
-
-import os
+"""End-to-end FBX export on the sample data, using the fake fbx module."""
 
 import numpy as np
 import pytest
@@ -8,28 +6,12 @@ import scipy.io as sio
 
 import fbx
 import main
-from skeleton import JOINT_NAMES
+from conftest import MESH, POSE, WEIGHTS
+from rig import JOINT_NAMES
 from smpl_math import pose_to_joint_rotations
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MESH = os.path.join(ROOT, "meshes", "MESH1_SMPL.mat")
-POSE = os.path.join(ROOT, "animations", "104_03_c0003_info.mat")
-WEIGHTS = os.path.join(ROOT, "myWeights.npy")
 
 pytestmark = pytest.mark.skipif(not getattr(fbx, "IS_FAKE", False),
                                 reason="runs only with the fake fbx module")
-
-
-@pytest.fixture
-def regressor_file(tmp_path):
-    """Synthetic joint regressor (the real SMPL model is licensed)."""
-    rng = np.random.default_rng(0)
-    reg = np.zeros((24, 6890))
-    for j in range(24):
-        reg[j, rng.choice(6890, 10, replace=False)] = 0.1
-    path = tmp_path / "regressor.npz"
-    np.savez(path, J_regressor=reg)
-    return str(path)
 
 
 def _walk(node):
@@ -70,7 +52,7 @@ def test_export(tmp_path, regressor_file):
     knee = next(n for n in _walk(root_joint) if n.name == "L_Knee")
     assert knee.LclRotation.curves["Z"].keys[3][1] == pytest.approx(expected[3, 4, 2])
     assert knee.LclRotation.curves["Z"].keys[3][2] == "cubic"
-    assert "T" not in knee.props or not knee.LclTranslation.curves
+    assert not knee.LclTranslation.curves
 
 
 def test_bad_frame_range(tmp_path, regressor_file):

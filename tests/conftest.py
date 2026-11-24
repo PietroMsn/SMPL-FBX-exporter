@@ -188,3 +188,34 @@ except ImportError:
     fake.EXP_FBX_EMBEDDED = "EMBEDDED"
     fake.IS_FAKE = True
     sys.modules["fbx"] = fake
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+
+PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MESH = os.path.join(PROJECT, "meshes", "MESH1_SMPL.mat")
+POSE = os.path.join(PROJECT, "animations", "104_03_c0003_info.mat")
+WEIGHTS = os.path.join(PROJECT, "myWeights.npy")
+
+
+@pytest.fixture
+def regressor_file(tmp_path):
+    """Synthetic joint regressor (the real SMPL model is licensed)."""
+    rng = np.random.default_rng(0)
+    reg = np.zeros((24, 6890))
+    for j in range(24):
+        reg[j, rng.choice(6890, 10, replace=False)] = 0.1
+    path = tmp_path / "regressor.npz"
+    np.savez(path, J_regressor=reg)
+    return str(path)
+
+
+@pytest.fixture
+def rig(regressor_file):
+    from rig import build_rig
+    return build_rig(POSE, MESH, regressor_file, WEIGHTS, end=20)
