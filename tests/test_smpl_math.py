@@ -48,3 +48,16 @@ def test_local_positions_are_parent_relative():
     np.testing.assert_allclose(local[0], world[0])
     for i in range(1, NUM_JOINTS):
         np.testing.assert_allclose(local[i], world[i] - world[JOINT_PARENTS[i]])
+
+
+def test_z_up_sequence_stands_upright_after_conversion():
+    import scipy.io as sio
+    from conftest import POSE
+    from rig import z_up_to_y_up
+
+    poses = sio.loadmat(POSE)["pose"].T.reshape(-1, NUM_JOINTS, 3)
+    body_up = lambda rot: Rotation.from_rotvec(rot[:, 0]).apply([0, 1, 0]).mean(axis=0)
+    assert body_up(poses)[2] > 0.9                      # raw SURREAL: Z-up
+    converted = z_up_to_y_up(poses)
+    assert body_up(converted)[1] > 0.9                  # now Y-up
+    np.testing.assert_array_equal(converted[:, 1:], poses[:, 1:])  # only the root changes

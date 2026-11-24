@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import scipy.io as sio
+from scipy.spatial.transform import Rotation
 
 from geometry import load_geometry
 from smpl_math import NUM_JOINTS, calc_local_position
@@ -73,9 +74,26 @@ class Rig:
         return world
 
 
+def z_up_to_y_up(rotations):
+    """
+    Re-orient a pose sequence recorded in a Z-up world (e.g. raw SURREAL) for
+    a Y-up world: the global (Pelvis) rotation is pre-multiplied by -90 deg
+    about X. Returns a new (F, 24, 3) array.
+    """
+    out = np.array(rotations, dtype=float)
+    fix = Rotation.from_euler("x", -90, degrees=True)
+    out[:, 0] = (fix * Rotation.from_rotvec(out[:, 0])).as_rotvec()
+    return out
+
+
 def build_rig(pose_mat, mesh_mat, model, weights, scale=1.0, fps=30.0,
-              start=0, end=None):
-    """Load all inputs from disk and return a :class:`Rig`."""
+              start=0, end=None, up_axis="y"):
+    """
+    Load all inputs from disk and return a :class:`Rig`.
+
+    *up_axis* is the axis pointing up in the pose data: ``"z"`` re-orients
+    the animation for the Y-up output (see :func:`z_up_to_y_up`).
+    """
     vertices, faces = load_geometry(mesh_mat, scale)
     weights = np.load(weights)
     if weights.shape != (NUM_JOINTS, len(vertices)):
@@ -90,11 +108,17 @@ def build_rig(pose_mat, mesh_mat, model, weights, scale=1.0, fps=30.0,
     rest_offsets = np.zeros((NUM_JOINTS + 1, 3))
     rest_offsets[:NUM_JOINTS] = calc_local_position(regressor, vertices)
 
+    rotations = np.asarray(poses, dtype=float).reshape(len(poses), NUM_JOINTS, 3)
+    if up_axis == "z":
+        rotations = z_up_to_y_up(rotations)
+    elif up_axis != "y":
+        raise ValueError(f"up_axis must be 'y' or 'z', not {up_axis!r}")
+
     return Rig(
         vertices=vertices,
         faces=faces,
         weights=weights,
         rest_offsets=rest_offsets,
-        rotations=np.asarray(poses, dtype=float).reshape(len(poses), NUM_JOINTS, 3),
+        rotations=rotations,
         fps=float(fps),
     )
