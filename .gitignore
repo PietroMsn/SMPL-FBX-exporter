@@ -16,5 +16,6 @@ venv/
 models/
 
 # Generated output
+output/
 resFbx/
 *.fbx
