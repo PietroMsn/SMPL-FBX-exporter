@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Native modules (install the FBX SDK yourself, see README)
+*.pyd
+*.so
+
+# SMPL model (license: download it from smpl.is.tue.mpg.de)
+models/
+
+# Generated output
+resFbx/
+*.fbx
